@@ -1,8 +1,8 @@
 
-# This script can be used to replicate the results of the paper 'How to measure
-# publication relatedness using MeSH-terms', which will be submitted for review
-# to the 28th International Conference on Science, Technology and Innovation
-# Indicators, 2024.
+# This script can be used to replicate the results of the paper 'Measuring 
+# publication relatedness using controlled vocabularies', which has been
+# submitted for review to the 28th International Conference on Science, 
+# Technology and Innovation Indicators, 2024.
 
 # In most parts of the code, the global environment is not cleaned, i.e.,
 # intermediate objects are not removed. If RAM is needed, the global environment
