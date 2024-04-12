@@ -7,7 +7,7 @@
 # In most parts of the code, the global environment is not cleaned, i.e.,
 # intermediate objects are not removed. If RAM is needed, the global environment
 # can be cleaned before running each chapter (indicated by 5 consecutive lines
-# starting with '#), since all objects necessary to execute a chapter are loaded
+# starting with '#'), since all objects necessary to execute a chapter are loaded
 # within that chapter.
 
 # Author: Emil Dolmer Alnor, Aarhus University, ea@ps.au.dk
@@ -304,12 +304,13 @@ fnM <- function(target) {
 # ********************************************* #
 #  Data and loop                                #
 # ********************************************* #
+
 results <- list()
 min <- 1
 max <- 50
 j <- 1
 pmids <- read.csv("pmids6_clean.txt") %>% unlist()
-ak <- readLines("C:/Users/au544242/OneDrive - Aarhus universitet/Kodning/rentrez_token.txt")
+ak <- DEFINE THE API_KEY HERE
 
 while (T == T) {
   
@@ -322,6 +323,31 @@ while (T == T) {
     db = "pubmed", id = pmid, rettype = "xml", parsed = T, api_key = ak) 
   
   list <- xmlToList(xml) 
+  
+  # Error handling: Sometimes the entrez_fetch does not work in the first
+  # attempt. In the runs of this script, it has always suceed within 3 attempts.
+  # If the maximum attempts is reached, manual error inspection is needed.
+  
+  attempt <- 2
+  
+  while(length(list)==1) {
+    
+    Sys.sleep(1)
+    
+    cat(paste0('Attempt: ', attempt, '\n'))
+    
+    xml <- entrez_fetch(
+      db = "pubmed", id = pmid, rettype = "xml", parsed = T, api_key = ak) 
+    
+    list <- xmlToList(xml)
+    
+    attempt <- attempt+1
+    
+    if (attempt==10) {
+      stop('Max attempts reached')
+    }
+    
+  }
   
   round <- list()
   
@@ -378,7 +404,7 @@ resultsDf <- results %>% bind_rows() %>%
   ) %>% 
   filter(
     !is.na(muid) & #Remove commentaries, corrigendums, etc.
-    !(muid %in% c("D005260", "D008297")) #Remove check tags
+      !(muid %in% c("D005260", "D008297")) #Remove check tags
   ) %>% 
   select(-qMjr)
 saveRDS(resultsDf, file = 'mh6PDQ.rds')
@@ -476,7 +502,7 @@ cats <- edgelist6T1 %>%
     ndesc = sapply(1:n(), \(x) {
       row <- which(edgelist6T1$muid == .$chld[x]) %>% .[1]
       ntot <- edgelist6T1$ntot[row]
-   }),
+    }),
     ntot = ave(ndesc, muid, FUN = sum),
     ic = -log(ntot/sum(mh6Ic$ntot)),
     n = 0
@@ -553,7 +579,7 @@ save(topics, file = 'topics.rda')
 pmids <- rjs %>% 
   filter( #only compute for PMIDS:
     pmid %in% unique(mh$pmid) & #... with MH. E.g. 10675423 has RJ but no MH
-    topic %in% topics            #... in topics with 10% 'relevant' judgements 
+      topic %in% topics            #... in topics with 10% 'relevant' judgements 
   ) %>% 
   pull(pmid) %>%
   unique() #PMIDS can have RJS for several topics
@@ -616,7 +642,7 @@ fnDistS <- function(x) {
   others <- mh %>% filter(pmid %in% pmidList[[x]][[2]])
   
   if (nFocal>1) {
-  
+    
     dist <- dm[unique(others$muid), unique(focal$muid)] %>% 
       cbind(., dist = rowMins(.)) %>% 
       data.frame() %>% 
@@ -634,9 +660,9 @@ fnDistS <- function(x) {
         dist = (dnf + dfn) / (nNeigh + nFocal)
       ) %>% 
       select(pubA = pmid, pubB = focal, dist)
-  
+    
   } else if (nFocal == 1) {
-
+    
     dist <- dm[unique(others$muid), focal$muid] %>% 
       data.frame(dist = .) %>% 
       mutate(muid = rownames(.)) %>% 
@@ -652,7 +678,7 @@ fnDistS <- function(x) {
         dist = (dnf + dfn) / (nNeigh + nFocal)
       ) %>% 
       select(pubA = pmid, pubB = focal, dist)
-  
+    
   }
   
 } 
