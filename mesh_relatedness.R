@@ -1,40 +1,42 @@
 
-# This script can be used to replicate the results of the paper 'Measuring 
-# publication relatedness using controlled vocabularies', which has been
-# submitted for review to the 28th International Conference on Science, 
-# Technology and Innovation Indicators, 2024.
-
-# In most parts of the code, the global environment is not cleaned, i.e.,
-# intermediate objects are not removed. If RAM is needed, the global environment
-# can be cleaned before running each chapter (indicated by 5 consecutive lines
-# starting with '#'), since all objects necessary to execute a chapter are loaded
-# within that chapter.
+# This script can be used to replicate the results of the paper 'Measuring
+# publication relatedness using controlled vocabularies', which will be
+# presented at the 28th International Conference on Science, Technology and
+# Innovation Indicators, 2024.
 
 # Author: Emil Dolmer Alnor, Aarhus University, ea@ps.au.dk
+
+# 0. Packages ####
+setwd('~/R/relatedness')
 
 library(httr)
 library(jsonlite)
 library(rentrez)
 library(xml2)
 library(XML)
-library(stringr)
+
 library(igraph)
 library(tidyr)
+library(stringr)
 library(dplyr)
+
+library(effsize)
 library(matrixStats)
-library(Matrix)
 library(future.apply)
 library(proxyC)
-library(effsize)
+library(Matrix)
+
 library(patchwork)
 library(ggplot2)
 library(viridis)
+library(plotly)
+
 library(openxlsx)
 library(readxl)
 
 # ***************************************************************** #
 #*******************************************************************#
-### MeSH Hiearchy                                                   #
+# 1. MeSH Hiearchy                                               ####
 #*******************************************************************#
 # ***************************************************************** #
 
@@ -82,7 +84,7 @@ tree$pattern <- paste0(
   "\\."
 )
 
-fn <- function(x) {
+fnDesc <- function(x) {
   
   index <- which(str_detect(tree$tn, x))
   
@@ -94,7 +96,7 @@ fn <- function(x) {
 }
 
 plan(multisession, workers = 6) 
-tree$desc <- future_sapply(tree$pattern, fn)
+tree$desc <- future_sapply(tree$pattern, fnDesc)
 
 #Children
 tree <- tree %>%
@@ -113,7 +115,7 @@ tree <- tree %>% select(muid, mh, tn, desc, chld)
 save(tree, file = "tree.rda")
 
 # ********************************************* #
-#  Edgelist                                     #
+## 1.1 Edgelist                              ####
 # ********************************************* #
 
 load("tree.rda")
@@ -121,7 +123,9 @@ load("tree.rda")
 #We start by creating a data.frame with one row for each node representation of the MeSH-terms.
 nodes <- tree %>% separate_rows(tn, sep = ';') %>% select(muid, tn)
 
-#Next we modify this data.frame to show the tree number of the parent for each node. Apart from highest lvl MeSH-terms (just below the categories) the parent is their tree number with the last digits and '.' removed
+#Next we modify this data.frame to show the tree number of the parent for each
+#node. Apart from highest lvl MeSH-terms (just below the categories) the parent
+#is their tree number with the last digits and '.' removed
 children <- nodes %>% 
   mutate(
     tnp = ifelse(
@@ -136,7 +140,8 @@ edgelist <- nodes %>%
   inner_join(children, by = c('tn' = 'tnp')) %>% 
   distinct(chld, muid, .keep_all = T) #Many parent-child-pairs are parent-child-pairs with more than 1 node.
 
-#We now need to add that the parents of the highest level MeSH-terms are the categories 
+#We now need to add that the parents of the highest level MeSH-terms are the
+#categories
 children <- edgelist %>% 
   filter(!str_detect(tn, '\\.')) %>% #All nodes with '.' are not highest lvl
   distinct(muid, tn) %>%  
@@ -159,7 +164,7 @@ save(edgelist, file = 'edgelist.rda')
 
 # ***************************************************************** #
 #*******************************************************************#
-### TREC Genomics 06'                                               #
+# 2. TREC Genomics 06'                                           ####
 #*******************************************************************#
 # ***************************************************************** #
 
@@ -172,7 +177,7 @@ download.file(
 
 temp <- read_excel("2006topics.xls")
 
-temp_fn <- function(type, first, last) {
+fnTop <- function(type, first, last) {
   
   mat <- temp %>%
     slice(first:last) %>%
@@ -184,10 +189,10 @@ temp_fn <- function(type, first, last) {
 }
 
 topics6 <- rbind(
-  temp_fn("disease", 3, 9),
-  temp_fn("process", 14, 20),
-  temp_fn("function", 25, 31),
-  temp_fn("impact", 36, 42)
+  fnTop("disease", 3, 9),
+  fnTop("process", 14, 20),
+  fnTop("function", 25, 31),
+  fnTop("impact", 36, 42)
 ) %>%
   select('nid', 'id', 'type', 'need', 'gene', 'facet2')
 
@@ -251,7 +256,7 @@ write.csv(pmids6_clean, "pmids6_clean.txt", row.names = F)
 
 # ***************************************************************** #
 #*******************************************************************#
-### Publication MeSH data                                           #
+# 3. Publication MeSH data                                       ####
 #*******************************************************************#
 # ***************************************************************** #
 
@@ -261,7 +266,7 @@ write.csv(pmids6_clean, "pmids6_clean.txt", row.names = F)
 # the 'entrez_fetch'.
 
 # ********************************************* #
-#  Functions                                    #
+##  3.1 Functions                            ####
 # ********************************************* #
 
 # Sleep
@@ -302,7 +307,7 @@ fnM <- function(target) {
 }
 
 # ********************************************* #
-#  Data and loop                                #
+## 3.2 Data and loop                         ####
 # ********************************************* #
 
 results <- list()
@@ -398,9 +403,7 @@ saveRDS(results, file = 'rentrezResults.rds')
 resultsDf <- results %>% bind_rows() %>% 
   mutate(
     qMjr = ifelse(is.na(qMjr), 'N', qMjr),
-    mjr = ifelse(mjr == 'Y' | qMjr == 'Y', T, F),
-    w2 = ifelse(mjr == T, 2, 1),
-    w3 = ifelse(mjr == T, 3, 1)
+    mjr = ifelse(mjr == 'Y' | qMjr == 'Y', T, F)
   ) %>% 
   filter(
     !is.na(muid) & #Remove commentaries, corrigendums, etc.
@@ -416,23 +419,68 @@ save(pmidsNoMH, file = 'pmidsNoMH6.rda')
 
 mh6 <- resultsDf %>% 
   select(-quid) %>%
-  group_by(pmid, muid) %>% 
-  mutate( #because we remove P-M duplicates
-    mjr = any(mjr),
-    w2 = max(w2),
-    w3 = max(w3)
-  ) %>% 
+  group_by(pmid, muid) %>% #because we remove P-M duplicates
+  mutate(mjr = any(mjr)) %>% 
   distinct(pmid, muid, .keep_all = T)
 saveRDS(mh6, file = 'mh6.rds')
 
 nMh6 <- mh6 %>% group_by(pmid) %>% summarise(n = n())
 saveRDS(nMh6, file = 'nMh6.rds')
 
-# ***************************************************************** #
-#*******************************************************************#
-### Information Content                                             #
-#*******************************************************************#
-# ################################################################# #
+# ********************************************* #
+## 3.3 Prepare data                          ####
+# ********************************************* #
+
+#Select relevant PMIDS
+mh <- readRDS('mh6.rds')
+rjs <- read.csv('rjs6.txt')
+load('rjStats.rda')
+
+pmidsWithMh <- mh %>% pull(pmid) %>% unique()
+save(pmidsWithMh, file = 'pmidsWithMh.rda')
+
+topics <- rjStats %>% filter(noRat<0.9) %>% pull(topic)
+save(topics, file = 'topics.rda')
+
+pmids <- rjs %>% 
+  filter( #only compute for PMIDS:
+    pmid %in% unique(mh$pmid) & #... with MH. E.g. 10675423 has RJ but no MH
+      topic %in% topics            #... in topics with 10% 'relevant' judgements
+  ) %>% 
+  pull(pmid) %>%
+  unique() #PMIDS can have RJS for several topics
+save(pmids, file = 'pmidsTopics.rda')
+
+pmidsDf <- pmids %>% data.frame() %>% rename(., pmid = `.`)
+save(pmidsDf, file = 'pmidsDf.rda')
+
+# MeSH  
+
+#Major
+mhMjr <- mh %>% semi_join(pmidsDf, by = 'pmid') %>% ungroup()
+
+lapply(2:10, function(x) {
+  mhMjr[[paste0('w', x)]] <<- ifelse(mhMjr$mjr, mhMjr$mjr*x, 1)
+}
+)
+
+saveRDS(mhMjr, file = 'mhMjr.rds')
+
+namesFull <- unique(mhMjr$muid)
+
+#Slim
+mhSlim <- mhMjr %>% 
+  filter(mjr == T) %>% 
+  select(pmid, muid)
+saveRDS(mhSlim, file = 'mhSlim.rds')
+
+namesSlim <- unique(mhSlim$muid)
+
+save(namesSlim, namesFull, file = 'names.rda')
+
+# ********************************************* #
+## 3.4 Information content                   ####
+# ********************************************* #
 
 mh6 <- readRDS("mh6.rds")
 load("tree.rda")
@@ -463,12 +511,12 @@ saveRDS(mh6Ic, file = "mh6Ic.rds")
 
 # ****************************************************************** #
 #********************************************************************#
-### Distances between terms                                          #
+# 4. Distances between terms                                      ####
 #********************************************************************#
 # ****************************************************************** #
 
 # ********************************************* #
-#  Step length is 1                             #
+## 4.1 Step length is 1                      ####
 # ********************************************* #
 
 load("edgelist.rda")
@@ -481,8 +529,10 @@ dm1 <- distances(g1)
 
 saveRDS(dm1, file = 'dm1.rds', compress = F)
 
+rm(g1, dm1, elClean)
+
 # ********************************************* #
-#  Step length is delta-IC                      #
+## 4.2 Step length is delta-IC               ####
 # ********************************************* #
 
 mh6Ic <- readRDS('mh6Ic.rds')
@@ -553,98 +603,265 @@ dmIc <- distances(gIc, weight = E(gIc)$deltaIc)
 
 saveRDS(dmIc, file = 'dmIc.rds', compress = F)
 
-# ***************************************************************** #
-#*******************************************************************#
-### Distances between publications                                  #
-#*******************************************************************#
-# ***************************************************************** #
-
+rm(el6Clean, tree, edgelist6, gIc, dmIc, edgelist6T2, edgelist6T1, cats, mh6Ic)
 
 # ********************************************* #
-#  Ready data                                   #
+## 4.3 Zhu et al.                            ####
 # ********************************************* #
 
-mh <- readRDS('mh6.rds')
+### 4.3.1 Common data ####### 
 
-#Select relevant PMIDS
-rjs <- read.csv('rjs6.txt')
-load('rjStats.rda')
+load('tree.rda')
 
-pmidsWithMh <- mh %>% pull(pmid) %>% unique()
-save(pmidsWithMh, file = 'pmidsWithMh.rda')
+freq <- readRDS(file = 'mhMjr.rds') %>% 
+  group_by(muid) %>% summarise(n = n()) %>% select(muid)
 
-topics <- rjStats %>% filter(noRat<0.9) %>% pull(topic)
-save(topics, file = 'topics.rda')
+load('edgelist6.rda')
+cats <- edgelist6 %>% 
+  filter(nchar(muid) == 1) %>% 
+  distinct(muid, ic) %>% 
+  mutate(tn = muid)
 
-pmids <- rjs %>% 
-  filter( #only compute for PMIDS:
-    pmid %in% unique(mh$pmid) & #... with MH. E.g. 10675423 has RJ but no MH
-      topic %in% topics            #... in topics with 10% 'relevant' judgements 
-  ) %>% 
-  pull(pmid) %>%
-  unique() #PMIDS can have RJS for several topics
-save(pmids, file = 'pmidsTopics.rda')
+tns <- tree %>% 
+  select(muid, tn) %>%
+  separate_rows(tn, sep = ';') %>% 
+  inner_join(readRDS('mh6Ic.rds'), by = 'muid') %>% 
+  select(muid, tn, ic) %>% 
+  bind_rows(cats)
 
-pmidList <- list()
+icm <- tns %>% distinct(muid, .keep_all = T) %>% bind_rows(cats)
 
-for (i in 1:(length(pmids)-1)) {
-  sublist <- list(pmids[i], pmids[(i+1):length(pmids)])
-  pmidList[[i]] <- sublist
+save(tns, icm, file = 'tns_icm.rda')
+
+df <- tns %>% 
+  inner_join(freq, by = 'muid') %>%
+  mutate(tn = str_extract_all(tn, "[A-Z]|\\d+")) %>% 
+  select(-ic) %>% 
+  group_by(muid) %>% 
+  mutate(n_tn = n()) %>% 
+  ungroup() 
+
+rm(tree, freq, tns, icm, cats, edgelist6)
+
+fnLca <- function(a, b) {
+  if (a[1] != b[1]) return(0) #allows early terminate, since T in most cases
+  
+  len <- min(length(a), length(b))
+  
+  i <- 1
+  
+  while (i <= len && a[i] == b[i]) {
+    i <- i + 1
+  }
+  
+  return(i-1)
 }
 
-save(pmidList, file = 'pmidList.rda')
+### Common dataframe ********
 
-#Major
-mhMjr <- mh %>% 
-  filter(pmid %in% pmids) %>% 
-  select(-mjr)
-saveRDS(mhMjr, file = 'mhMjr.rds')
+df2 <- bind_rows(
+  df %>% inner_join(df, join_by(muid < muid)), 
+  df %>% inner_join(df, join_by(muid > muid))
+) %>% 
+  mutate(dep_cca = mapply(fnLca, tn.x, tn.y))
 
-#Slim
-mhSlim <- mh %>% 
-  filter(mjr == T & pmid %in% pmids) %>% 
-  select(pmid, muid)
-saveRDS(mhSlim, file = 'mhSlim.rds')
+fnCa <- function(tn, dep) {
+  if (is.na(dep)) return(NA)
+  if (dep==1) return(tn[1])
+  paste0(tn[1], paste(tn[2:dep], collapse = '.'))
+}
 
-namesSlim <- unique(mhSlim$muid)
+df_noca <- df2 %>% filter(dep_cca == 0)
+df_ca <- df2 %>% filter(dep_cca > 0)
+rm(df2, df)
 
-dmSlimIc <- readRDS('dmIc.rds') %>% 
-  .[namesSlim, namesSlim]
-saveRDS(dmSlimIc, file = 'dmSlimIc.rds')
+df_ca <- df_ca %>% 
+  mutate(
+    dep_tnx = vapply(tn.x, length, numeric(1)),
+    dep_tny = vapply(tn.y, length, numeric(1)),
+    ca = mapply(fnCa, tn.x, dep_cca)
+  )
 
-dmSlim1 <- readRDS('dm1.rds') %>% 
-  .[namesSlim, namesSlim]
-saveRDS(dmSlim1, file = 'dmSlim1.rds')
+print(1) #Because computations are time-demanding, we split the process up, and
+#monitor progress by printing integers
 
-#Full
-mhFull <- mh %>% 
-  select(pmid, muid) %>% 
-  filter(pmid %in% pmids)
-saveRDS(mhFull, file = 'mhFull.rds')
+df_ca <- df_ca %>% 
+  bind_rows(df_noca) %>% 
+  select(-tn.y) %>% 
+  mutate(tn.x = vapply(
+    tn.x, function(x) paste0(x, collapse = '.'), character(1)) %>%
+      factor() %>% as.numeric()
+  )
 
-dmFullIc <- readRDS('dmIc.rds') %>% 
-  .[unique(mhFull$muid), unique(mhFull$muid)]
-saveRDS(dmFullIc, file = 'dmFullIc.rds')
+rm(df_noca)
+print(2)
 
-dmFull1 <- readRDS('dm1.rds') %>%
-  .[unique(mhFull$muid), unique(mhFull$muid)]
-saveRDS(dmFull1, file = 'dmFull1.rds')
+df_ca <- df_ca %>% 
+  group_by(tn.x, muid.y) %>% 
+  filter(dep_cca == max(dep_cca)) %>% 
+  filter(row_number() ==1) %>% 
+  mutate(
+    muid.x2 = pmin(muid.x, muid.y),
+    muid.y2 = pmax(muid.x, muid.y),
+    n = n_tn.x + n_tn.y,
+  ) %>% 
+  select(muid.x = muid.x2, tn.x, dep_tnx, muid.y = muid.y2, dep_tny, dep_cca, 
+         ca, n)
 
-# ********************************************* #
-#  Functions                                    #
-# ********************************************* #
+df3 <- df_ca
+rm(df_ca, fnLca, fnCa)
 
-fnDistS <- function(x) {
+print(3)
+
+saveRDS(df3, file = 'zhu_df3.rds')
+
+### 4.3.2 Path length ########
+
+path <- df3 %>% 
+  select(-ca) %>% 
+  mutate(
+    wp = (2*dep_cca) / (dep_tnx + dep_tny),
+    wp_dist = dep_tnx + dep_tny - 2*dep_cca,
+    wp1 = exp(-wp_dist/1),
+    wp2 = exp(-wp_dist/2),
+    wp3 = exp(-wp_dist/3),
+    wp4 = exp(-wp_dist/4),
+    wp5 = exp(-wp_dist/5)
+  ) %>% 
+  group_by(muid.x, muid.y) %>% 
+  summarise(across(c(wp, wp1, wp2, wp3, wp4, wp5), ~ sum(.x) / first(n)))  %>% 
+  mutate(across(c(wp, wp1, wp2, wp3, wp4, wp5), ~ ifelse(is.na(.), 0, .)))
+
+saveRDS(path, file = 'zhu_path.rds')
+
+#Matrix
+mhs <- sort(unique(c(path$muid.x, path$muid.y)))
+
+temp_mat <- matrix(
+  NA, 
+  nrow = length(mhs), 
+  ncol = length(mhs), 
+  dimnames = list(mhs, mhs)
+)
+
+diag(temp_mat) <- 1
+
+load('names.rda')
+
+fnMat <- function(var, dm) {
+  print(var)
   
-  focal <- mh %>% filter(pmid == pmidList[[x]][[1]])
+  mat <- temp_mat
+  
+  mat[as.matrix(rev(dm[, c('muid.x', 'muid.y')]))] <- dm[[var]]
+  mat[upper.tri(mat)] <- t(mat)[upper.tri(mat)]
+  
+  mat <- mat[namesFull, namesFull]
+  saveRDS(mat, file = paste0('dm_f_', var, '.rds'))
+  
+  mat <- mat[namesSlim, namesSlim]
+  saveRDS(mat, file = paste0('dm_s_', var, '.rds'))
+}
+
+for (v in c('wp', 'wp1', 'wp2', 'wp3', 'wp4', 'wp5')) fnMat(v, path)
+
+rm(path)
+
+### 4.3.3 IC #####
+
+
+load('tns_icm.rda')
+
+#Add ic to tns
+ic <- df3 %>% 
+  select(-dep_tnx, -dep_tny) %>% 
+  filter(dep_cca > 0) %>% #only do computations where its needed
+  left_join(tns, by = c('ca' = 'tn')) %>% 
+  rename(ca_muid = muid, ca_ic = ic) %>% 
+  left_join(icm, by = c('muid.x' = 'muid')) %>% rename(ic.x = ic) %>% 
+  left_join(icm, by = c('muid.y' = 'muid')) %>% rename(ic.y = ic) %>%
+  select(-ca, -ca_muid, -tn.x.x, -tn.y) %>% 
+  bind_rows(df3 %>%
+              filter(dep_cca == 0) %>%
+              select(-dep_tnx, -dep_tny, -ca)
+  ) %>% 
+  mutate(
+    lin = ifelse(dep_cca == 0, 0, (2*ca_ic) / (ic.x + ic.y)),
+    djc = ifelse(dep_cca == 0, 9999, ic.x + ic.y - 2*ca_ic),
+    jc1 = ifelse(dep_cca == 0, 0, exp(-djc/1)),
+    jc2 = ifelse(dep_cca == 0, 0, exp(-djc/2)),
+    jc3 = ifelse(dep_cca == 0, 0, exp(-djc/3)),
+    jc4 = ifelse(dep_cca == 0, 0, exp(-djc/4)),
+    jc5 = ifelse(dep_cca == 0, 0, exp(-djc/5)),
+  ) %>%
+  group_by(muid.x, muid.y) %>% 
+  summarise(across(c(lin, jc1, jc2, jc3, jc4, jc5), ~ sum(.x) / first(n))) 
+
+rm(icm, tns, df3)
+
+saveRDS(ic, file = 'zhu_ic.rds')
+
+#Matrix
+for (v in c('lin', 'jc1', 'jc2', 'jc3', 'jc4', 'jc5')) fnMat(v, ic)
+
+rm(temp_mat, namesSlim, namesFull, mhs, fnMat, ic, v)
+
+# ***************************************************************** #
+#*******************************************************************#
+# 5. Distances between publications                             #####
+#*******************************************************************#
+# ***************************************************************** #
+
+# ********************************************* #
+## 5.1 Distance matrices                    #####
+# ********************************************* #
+
+fnDm <- function(dist, names, file) {
+  dm <- dist[names, names]
+  dm <- -dm # '-' allows to take rowMaxs for dist
+  
+  saveRDS(dm, file = paste0(file, '.rds'))
+  
+  dm <- -dm
+  
+  for (i in 1:5) {
+    cat(file, i)
+    
+    sim <- (exp(-dm / i)) 
+    saveRDS(sim, file = paste0(file, '_sim', i, '.rds'))
+  }
+}
+
+ic <- readRDS('dmIc.rds')
+dm1 <- readRDS('dm1.rds') 
+load('names.rda')
+
+fnDm(dist = ic, names = namesFull, file = 'dm_f_ic') 
+fnDm(dist = ic, names = namesSlim, file  = 'dm_s_ic')
+fnDm(dist = dm1, names = namesFull, file = 'dm_f_1')
+fnDm(dist = dm1, names = namesSlim, file = 'dm_s_1')
+
+rm(fnDm, ic, dm1, namesFull, namesSlim)
+
+# ********************************************* #
+## 5.2 Functions                            #####
+# ********************************************* #
+
+fnSimS <- function(x) {
+  
+  #Values
+  focal <- mh %>% filter(pmid == pmids[x])
   nFocal <- length(unique(focal$muid))
   
-  others <- mh %>% filter(pmid %in% pmidList[[x]][[2]])
+  others <- mh %>% semi_join(
+    pmidsDf %>% slice(x+1:nrow(.)),
+    by = 'pmid'
+  )
   
   if (nFocal>1) {
     
     dist <- dm[unique(others$muid), unique(focal$muid)] %>% 
-      cbind(., dist = rowMins(.)) %>% 
+      cbind(., dist = rowMaxs(.)) %>% 
       data.frame() %>% 
       mutate(muid = rownames(.)) %>% 
       inner_join(others, by = 'muid') %>% 
@@ -652,11 +869,11 @@ fnDistS <- function(x) {
       summarise(
         dnf = sum(dist),
         nNeigh = n(),
-        across(.cols = 1:nFocal, .fns = min)
+        across(.cols = all_of(1:nFocal), max)
       ) %>% 
       mutate(
         dfn = rowSums(select(., 4:ncol(.))), #Must be in first mutate.
-        focal = pmidList[[x]][[1]],
+        focal = pmids[x],
         dist = (dnf + dfn) / (nNeigh + nFocal)
       ) %>% 
       select(pubA = pmid, pubB = focal, dist)
@@ -674,7 +891,7 @@ fnDistS <- function(x) {
         dfn = min(dist)
       ) %>% 
       mutate(
-        focal = pmidList[[x]][[1]],
+        focal = pmids[x],
         dist = (dnf + dfn) / (nNeigh + nFocal)
       ) %>% 
       select(pubA = pmid, pubB = focal, dist)
@@ -683,140 +900,138 @@ fnDistS <- function(x) {
   
 } 
 
-fnDistW <- function(x) {
+fnSimW <- function(x) {
   
-  focal <- mh %>% filter(pmid == pmidList[[x]][[1]])
+  #Values
+  focal <- mh %>% filter(pmid == pmids[x])
   mhF <- unique(focal$muid)
   nFocal <- length(mhF)
-  sw2f <- sum(focal$w2)
-  sw3f <- sum(focal$w3)
+  sumMjr <- sum(focal$mjr)
+  for (i in 2:10) assign(paste0('sw', i, 'f'), sum(focal[[paste0('w', i)]]))
   
-  others <- mh %>% filter(pmid %in% pmidList[[x]][[2]])
+  others <- mh %>% semi_join(
+    pmidsDf %>% slice(x+1:nrow(.)),
+    by = 'pmid'
+  )
   
+  #Get closest mesh in focal
   dist <- dm[unique(others$muid), mhF] %>%
-    cbind(., dist = rowMins(.)) %>% 
+    cbind(., dist = rowMaxs(.)) %>% 
     data.frame() %>%
     mutate(muid = rownames(.)) %>% 
-    inner_join(others, by = 'muid') %>% 
-    mutate(distW2 = dist*w2, distW3 = dist*w3) %>% 
-    group_by(pmid) %>%
-    summarise(
-      dnfw1 = sum(dist),
-      dnfw2 = sum(distW2),
-      dnfw3 = sum(distW3),
-      sw2n = sum(w2),
-      sw3n = sum(w3),
-      nOther = n(),
-      across(.cols = 1:nFocal, .fns = min)
-    ) 
+    inner_join(others, by = 'muid') 
   
-  dist[paste0('TWO_', mhF)] <- lapply(
-    mhF,
-    \(y) dist[, y] * focal$w2[match(y, focal$muid)]
-  )
-  
-  dist[paste0('THREE_', mhF)] <- lapply(
-    mhF,
-    \(y) dist[, y] * focal$w3[match(y, focal$muid)]
-  )
+  for (i in 2:10){
+    dist[[paste0('dw', i)]] <- dist[['dist']] * dist[[paste0('w', i)]]
+  } 
   
   dist <- dist %>% 
+    group_by(pmid) %>%
+    summarise(
+      dnfw1 = sum(dist), 
+      dnfw2 = sum(dw2), dnfw3 = sum(dw3), dnfw4 = sum(dw4), 
+      dnfw5 = sum(dw5), dnfw6 = sum(dw6), dnfw7 = sum(dw7), 
+      dnfw8 = sum(dw8), dnfw9 = sum(dw9), dnfw10 = sum(dw10),
+      sw2n = sum(w2), sw3n = sum(w3), sw4n = sum(w4), sw5n = sum(w5), 
+      sw6n = sum(w6), sw7n = sum(w7), sw8n = sum(w8), sw9n = sum(w9), 
+      sw10n = sum(w10), 
+      nOther = n(),
+      across(.cols = all_of(1:nFocal), max)
+    ) 
+  
+  #Sum closest in neighbor
+  for (i in 2:10) {
+    
+    dist[paste0('W', i, mhF)] <- lapply(
+      mhF,
+      \(y) dist[, y] * focal[[paste0('w', i)]][match(y, focal$muid)]
+    )
+  }
+  
+  #Non-weighted distance
+  dist <- dist %>% 
     mutate(
-      focal = pmidList[[x]][[1]],
-      dfnw1 = rowSums(select(., starts_with('D0'))),
-      dfnw2 = rowSums(select(., starts_with('TWO_'))),
-      dfnw3 = rowSums(select(., starts_with('THREE_'))),
-      distW1 = (dfnw1 + dnfw1) / (nFocal + nOther),
-      distW2 = (dfnw2 + dnfw2) / (sw2f + sw2n),
-      distW3 = (dfnw3 + dnfw3) / (sw3f + sw3n)
-    ) %>%
-    select(pubA = pmid, pubB = focal, distW1, distW2, distW3)
+      focal = pmids[x],
+      distW1 = (rowSums(select(., starts_with(paste0('D0')))) + dnfw1) 
+      / (nFocal + nOther)
+    )
+  
+  #Weighted distances
+  for (i in 2:10) {
+    
+    dfnw <- rowSums(dist %>% select(starts_with(paste0('W', i))))
+    dnfw <- dist[[paste0('dnfw', i)]]
+    swf <- get(paste0('sw', i, 'f'))
+    swn <- dist[[paste0('sw', i, 'n')]]
+    
+    dist[[paste0('distW', i)]] <- (dfnw + dnfw) / (swf + swn)
+    
+  }
+  
+  #Clean
+  dist <- dist %>% select(pubA = pmid, pubB = focal, distW1:distW10)
   
 }
 
+fnRel <- function(mat) {
+  print(mat)
+  dm <<- readRDS(paste0(mat, '.rds'))
+  
+  prefix <- str_remove(mat, 'dm_')
+  
+  if (str_detect(mat, '_s_')){
+    mh <<- readRDS('mhSlim.rds')
+    
+    list <- future_lapply(1:(length(pmids)-1), fnSimS)
+    relPubs <- list %>% bind_rows()
+    
+    names(relPubs)[3] <- prefix
+    
+  } else if (str_detect(mat, '_f_')) {
+    mh <<- readRDS('mhMjr.rds')
+    
+    list <- future_lapply(1:(length(pmids)-1), fnSimW) 
+    relPubs <- list %>% bind_rows()
+    
+    names(relPubs) <- str_replace(
+      names(relPubs), 
+      '^distW', 
+      paste0(prefix, '_w')
+    )
+  } 
+  
+  saveRDS(relPubs, file = paste0('rp_', prefix, '.rds'))
+}
 
 # ********************************************* #
-# Delta-IC is step length                       #
+## 5.3 Graph + Zhu                          #####
 # ********************************************* #
 
-rm(list=setdiff(ls(), c("fnDistW", "fnDistS")))
-
-load('pmidList.rda')
 load('pmidsTopics.rda')
+load('pmidsDf.rda')
 
-plan(multisession, workers = 6) 
+plan(multisession, workers = 22) 
 options(future.globals.maxSize = 800 * 1024^2)
 
-#Slim
-dm <- readRDS('dmSlimIc.rds')
-mh <- readRDS('mhSlim.rds')
+matrices <- paste0(
+  'dm_', c('f_ic', 's_ic', 'f_1', 's_1'), 
+  rep(c('', paste0('_sim', 1:5)), each = 4)
+) %>% c(
+  paste0(
+    c('dm_f_', 'dm_s_'),
+    rep(c(paste0('wp', 1:5), paste0('jc', 1:5), 'wp', 'lin'), each = 2)
+  )
+)
 
-list <- future_lapply(seq_along(pmidList), fnDistS) 
+for (matrix in matrices) fnRel(matrix)
 
-distPubs <- list %>% bind_rows()
+rm(dm, fnSimS, fnSimW, fnRel, matrix, pmids, pmidsDf)
 
-saveRDS(distPubs, file = 'distPubs_ic_slim.rds', compress = F)
+# ********************************************* #
+## 5.4 Co-occurence, Boudreau              ######
+# ********************************************* #
 
-rm(list, distPubs)
-
-#Full + Major 2 and Major 3
-dm <- readRDS('dmFullIc.rds')
 mh <- readRDS('mhMjr.rds')
-
-list <- future_lapply(seq_along(pmidList), fnDistW)
-
-distPubs <- list %>% bind_rows()
-
-slim <- readRDS('distPubs_ic_slim.rds')
-
-distPubsIc <- distPubs %>% 
-  inner_join(slim, by = c('pubA', 'pubB')) %>% 
-  rename(distW1Ic = distW1, distW2Ic = distW2, distW3Ic = distW3,
-         distW0Ic = dist)
-
-saveRDS(distPubsIc, file = 'distPubs_ic.rds')
-
-# ********************************************* #
-# 1 is step length                              #
-# ********************************************* #
-
-rm(list=setdiff(ls(), c("fnDistW", "fnDistS")))
-
-load('pmidList.rda')
-load('pmidsTopics.rda')
-
-#Slim
-dm <- readRDS('dmSlim1.rds')
-mh <- readRDS('mhSlim.rds')
-
-list <- future_lapply(seq_along(pmidList), fnDistS) 
-
-distPubs <- list %>% bind_rows()
-
-saveRDS(distPubs, file = 'distPubs_1_slim.rds', compress = F)
-
-#Full + Major 2 + Major 3
-dm <- readRDS('dmFull1.rds')
-mh <- readRDS('mhMjr.rds')
-
-list <- future_lapply(seq_along(pmidList), fnDistW)
-
-distPubs <- list %>% bind_rows()
-
-slim <- readRDS('distPubs_1_slim.rds')
-
-distPubs1 <- distPubs %>% 
-  inner_join(slim, by = c('pubA', 'pubB')) %>% 
-  rename(distW1_1 = distW1, distW2_1 = distW2, distW3_1 = distW3, 
-         distW0_1 = dist)
-
-saveRDS(distPubs1, file = 'distPubs_1.rds')
-
-# ********************************************* #
-# Co-occurence, Boudreau                        #
-# ********************************************* #
-
-mh <- readRDS('mhFull.rds')
 
 #Distance matrix
 mat <- sparseMatrix(
@@ -845,7 +1060,7 @@ distPubs <- data.frame(
 saveRDS(distPubs, file = 'distPubs_boudreau.rds')
 
 # ********************************************* #
-# Co-occurence, Ahlgren                         #
+## 5.5 Co-occurence, Ahlgren                 ####
 # ********************************************* #
 
 load('pmidsTopics.rda')
@@ -893,28 +1108,33 @@ distPubs <- data.frame(
 
 saveRDS(distPubs, file = 'distPubs_ahlgreen.rds')
 
+rm(ic, mh, quids, mhQ, mat, lti, distPubs, pmids)
+
 # ********************************************* #
-### Combine                                     #
+## 5.6. Combine                             #####
 # ********************************************* #
 
-distPubsAll <- readRDS('distPubs_ic.rds') %>% 
-  inner_join(readRDS('distPubs_1.rds'), by = c('pubA', 'pubB')) %>% 
-  inner_join(readRDS('distPubs_ahlgreen.rds'), by = c('pubA', 'pubB')) %>% 
-  inner_join(readRDS('distPubs_boudreau.rds'), by = c('pubA', 'pubB'))
+files <- str_replace(matrices, 'dm', 'rp') %>% 
+  paste0(., '.rds') %>% c(., 'distPubs_boudreau.rds')
 
-saveRDS(distPubsAll, file = 'distPubsAll.rds')
+relPubs <- readRDS('distPubs_ahlgreen.rds')
+
+for (file in files) {
+  print(file)
+  relPubs <- relPubs %>% inner_join(readRDS(file), by = c('pubA', 'pubB'))
+}
+
+saveRDS(relPubs, file = 'relPubsAll.rds')
 
 load('topics.rda')
-distPubs <- readRDS('distPubsAll.rds')
 load('pmidsWithMh.rda')
-rjs <- read.csv('rjs6.txt') %>%
-  filter(pmid %in% pmidsWithMh)
+rjs <- read.csv('rjs6.txt') %>% filter(pmid %in% pmidsWithMh)
 
-fn <- function(x) {
+fnRjs <- function(x) {
   
   rjsRound <- rjs %>% filter(topic == topics[x])
   
-  list <- distPubs %>% 
+  list <- relPubs %>% 
     inner_join(rjsRound, by = c('pubA' = 'pmid')) %>% 
     inner_join(rjsRound, by = c('pubB' = 'pmid')) %>% 
     mutate(
@@ -924,22 +1144,20 @@ fn <- function(x) {
     select(-topic.y, -rj.x, -rj.y, topic = topic.x)
 }
 
-list <- lapply(seq_along(topics), fn)
+bmData <- lapply(seq_along(topics), fnRjs) %>% bind_rows()
 
-df <- list %>% bind_rows()
+saveRDS(bmData, file = 'bmData.rds')
 
-saveRDS(df, file = 'bmData.rds')
+rm(relPubs, fnRjs, files, rjs, pmidsWithMh, topics)
 
 # ***************************************************************** #
 #*******************************************************************#
-### Benchmark                                                       #
+# 6. Benchmark                                                   ####
 #*******************************************************************#
 # ***************************************************************** #
-
-bmData <- readRDS('bmData.rds')
 
 # ********************************************* #
-# Test 1 + Summary stats                        #
+## 6.1 Test 1 + Summary stats                ####
 # ********************************************* #
 
 df02 <- bmData %>% filter(rj1 == 0 & rj2 == 2)
@@ -952,7 +1170,12 @@ clfD <- future_lapply(
   \(x) cliff.delta(df02[[x]], df22[[x]])$estimate
 ) %>% unlist()
 
-results <- data.frame(
+clfD <- future_lapply(
+  vars,
+  \(x) cliff.delta(df22[[x]], df02[[x]])$estimate
+) %>% unlist()
+
+test1 <- data.frame(
   var = vars,
   mean02 = colMeans(df02[vars]),
   mean22 = colMeans(df22[vars]),
@@ -963,129 +1186,112 @@ results <- data.frame(
   clfD
 ) %>% mutate(across(where(is.numeric), ~round(., digits = 3)))
 
-saveRDS(results, file = 'results.RDS')
+save(test1, file = 'test1.rda')
+
+rm(df02, df22, clfD, test1)
 
 # ********************************************* #
-# Test 2                                        #
+## 6.3 Test 2                               #####
 # ********************************************* #
 
 load('topics.rda')
 load('pmidsWithMh.rda')
 rjs <- read.csv('rjs6.txt') %>%
-  filter(pmid %in% pmidsWithMh)
+  filter(pmid %in% pmidsWithMh & rj %in% c(0, 2))
+vars <- colnames(bmData) %>% setdiff(c('pubA', 'pubB', 'topic', 'rj1', 'rj2'))
 
 resultsAll <- list()
 
 for (j in seq_along(topics)) {
   
-  print(j)
+  cat('topic', j, '\n')
   
-  topicNumber = topics[j]
+  topicNumber <- topics[j]
   
   df <- bmData %>% filter(topic == topicNumber)
   
   pmids <- union(df$pubA, df$pubB) 
   
   rjsTopic <- rjs %>% filter(topic == topicNumber & pmid %in% pmids)
+  topicPmids <- rjsTopic %>% filter(rj==2) %>% pull(pmid)
+  notTopicPmids <- rjsTopic %>% filter(rj==0) %>% pull(pmid)
   
-  nDecision <- 0
-  
-  resultsTopic <- data.frame(
-    metric = vars,
-    tp = 0,
-    tn = 0,
-    fp = 0,
-    fn = 0
-  )
+  resultsRounds <- list()
   
   for (i in 1:30) {
     
     print(i)
     
     set.seed(i)
-    topicPmids <- rjsTopic %>% 
-      filter(rj==2) %>% pull(pmid) %>% sample(size = 10)
+    topicSample <- topicPmids %>% sample(size = 10)
     
     set.seed(i)
-    notTopicPmids <- rjsTopic %>% 
-      filter(rj==0) %>% pull(pmid) %>% sample(size = 10)
+    notTopicSample <- notTopicPmids %>% sample(size = 10)
     
-    considerPmids <- rjsTopic %>% 
-      filter(!pmid %in% c(topicPmids, notTopicPmids)) %>% pull(pmid)
+    considerPmids <- rjsTopic$pmid[
+      !rjsTopic$pmid %in% c(topicSample, notTopicSample)
+    ] 
     
-    for (consider in considerPmids) {
+    resultsRounds[[i]] <- lapply(considerPmids, function(consider) {
       
-      resultsTopic$truth <- rjsTopic$rj[rjsTopic$pmid == consider]
+      test <- subset(df, pubA == consider | pubB == consider)
+      topic <- subset(test, pubA %in% topicSample | pubB %in% topicSample)
+      notTopic <- subset(test, pubA %in% notTopicSample | pubB %in% notTopicSample
+      ) 
       
-      if (resultsTopic$truth[1]==1) next
+      result <- cbind(
+        var = vars,
+        truth = rjsTopic$rj[rjsTopic$pmid == consider],
+        decision = sapply(vars, function(var) {
+          ifelse(max(notTopic[[var]]) < max(topic[[var]]), 2, 0)
+        })
+      )
       
-      test <- df %>% filter(pubA == consider | pubB == consider)
+      return(result)
       
-      topic <- test %>% filter(pubA %in% topicPmids | pubB %in% topicPmids)
-      
-      notTopic <- test %>% filter(pubA %in% notTopicPmids | pubB %in% notTopicPmids)
-      
-      #If distance (similarity) to pmids in topic is smallest, then pmid under consideration belongs to topic.
-      resultsTopic$decision <- sapply(vars, function(var) {
-        ifelse(
-          str_detect(var, 'W'),
-          ifelse(min(notTopic[[var]]) > min(topic[[var]]), 2, 0), 
-          ifelse(min(notTopic[[var]]) < min(topic[[var]]), 2, 0)
-        ) #if the 'not topics' are further (less similar) than the topics, decision is '2 - relevant'
-      })
-      
-      resultsTopic <- resultsTopic %>% 
-        mutate(
-          tp = ifelse(truth==2 & decision == 2, tp+1, tp),
-          tn = ifelse(truth==0 & decision == 0, tn+1, tn),
-          fp = ifelse(truth==0 & decision == 2, fp+1, fp),
-          fn = ifelse(truth==2 & decision == 0, fn+1, fn)
-        )
-      
-      nDecision <- nDecision + 1
-      
-    }
-    
-  }
+    })}
   
-  resultsTopic <- resultsTopic %>% 
+  resultsAll[[j]] <- lapply(
+    resultsRounds, 
+    function(il) do.call(rbind, il)
+  ) %>%
+    do.call(rbind, .) %>% 
+    data.frame() %>% 
     mutate(
-      precision   = round(tp / (tp + fp), 3),
-      recall      = round(tp / (tp + fn), 3),
-      specificity = round(tn / (tn + fp), 3),
-      sensitivity = round(tp / (tp + fn), 3),
-      topic       = topicNumber
-    ) %>% select(-truth, -decision)
-  
-  resultsAll[[j]] <- resultsTopic
-  
+      tp = (truth == 2 & decision == 2),
+      tn = (truth == 0 & decision == 0),
+      fp = (truth == 0 & decision == 2),
+      fn = (truth == 2 & decision == 0)
+    ) %>% 
+    group_by(var) %>% 
+    summarise(across(c('tp', 'tn', 'fp', 'fn'), sum))
 }
 
-information <- resultsAll %>% bind_rows() %>% 
-  filter(!str_detect('sim', metric)) %>% 
-  mutate(n = tp+tn+fp+fn) %>% 
-  group_by(metric) %>% 
-  summarize(
-    tp = sum(tp),
-    tn = sum(tn),
-    fp = sum(fp),
-    fn = sum(fn)
-  ) %>% 
+test2 <- resultsAll %>% bind_rows() %>% 
+  group_by(var) %>% 
+  summarise(across(c('tp', 'tn', 'fp', 'fn'), sum)) %>% 
   mutate(
     n = tp+tn+fp+fn,
     precision = round(tp / (tp+fp), 3),
     recall = round(tp / (tp + fn), 3),
-    phi = ((tp*tn)-(fp*fn))/(sqrt((tp+fp)*(tp+fn)*(tn+fp)*(tn+fn)))
+    phi = ((tp*tn)-(fp*fn))/(sqrt(
+      (as.numeric(tp)+as.numeric(fp))* #Avoids integer overflow
+        (as.numeric(tp)+as.numeric(fn))*
+        (as.numeric(tn)+as.numeric(fp))*
+        (as.numeric(tn)+as.numeric(fn))
+      ))
   )
 
-write.xlsx(information, "informationShort.xlsx")
+save(test2, file = 'test2.rda')
 
-saveRDS(information, file = 'information.rds')
+rm(topicNumber, df, pmids, rjsTopic, topicPmids, notTopicPmids, topicSample,
+   notTopicSample, considerPmids, resultsRounds, resultsTopicList, 
+   resultsTopic, resultsAll, test2)
 
 
 # ***************************************************************** #
 #*******************************************************************#
-### Visualise                                                       #
+# 7. Visualise                                                   ####
 #*******************************************************************#
 # ***************************************************************** #
 
@@ -1120,7 +1326,7 @@ pcooc <- ggplot(long, aes(x = val, color = var, linetype = type)) +
   theme_minimal() +
   theme(legend.position = "top")
 
-#∆IC
+#IC
 vars <- c('distW0Ic', 'distW1Ic', 'distW2Ic', 'distW3Ic')
 long <- fnLong(vars)
 
@@ -1128,7 +1334,7 @@ pIc <- ggplot(long, aes(x = val, color = var, linetype = type)) +
   geom_density(size = 0.5) +
   scale_color_manual(values = viridis_pal()(length(vars)), labels = c("Minor 0", "Major 1", "Major 2", "Major 3")) +
   scale_linetype_manual(values = lines) +
-  labs(linetype = 'Type', color = "Weight", x = "Distance (∆IC)", y = "Density") +
+  labs(linetype = 'Type', color = "Weight", x = "Distance (IC)", y = "Density") +
   coord_cartesian(xlim = c(0, 17.5), ylim = c(0, 0.45)) +
   scale_x_continuous(breaks = c(0, 5, 10, 15, 17.5)) +
   theme_minimal() +
@@ -1155,3 +1361,5 @@ ggsave(
   width = 7,
   height = 6.5
 )
+
+rm(bmData, df02, df22, long, p1, pIc, lines, vars, fnLong)
