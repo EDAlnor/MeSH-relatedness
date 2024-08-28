@@ -4,9 +4,8 @@
 # presented at the 28th International Conference on Science, Technology and
 # Innovation Indicators, 2024. 
 
-#Access via: https://doi.org/10.48550/arXiv.2408.15004
+# Access via: https://doi.org/10.48550/arXiv.2408.15004
  
-
 # Author: Emil Dolmer Alnor, Aarhus University, ea@ps.au.dk
 
 # 0. Packages ####
