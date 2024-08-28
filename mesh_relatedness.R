@@ -10,8 +10,6 @@
 # Author: Emil Dolmer Alnor, Aarhus University, ea@ps.au.dk
 
 # 0. Packages ####
-setwd('~/R/relatedness')
-
 library(httr)
 library(jsonlite)
 library(rentrez)
