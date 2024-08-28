@@ -2,7 +2,10 @@
 # This script can be used to replicate the results of the paper 'Measuring
 # publication relatedness using controlled vocabularies', which will be
 # presented at the 28th International Conference on Science, Technology and
-# Innovation Indicators, 2024.
+# Innovation Indicators, 2024. 
+
+#Acess via: https://doi.org/10.48550/arXiv.2408.15004
+ 
 
 # Author: Emil Dolmer Alnor, Aarhus University, ea@ps.au.dk
 
@@ -14,17 +17,18 @@ library(jsonlite)
 library(rentrez)
 library(xml2)
 library(XML)
-
 library(igraph)
+
 library(tidyr)
 library(stringr)
 library(dplyr)
+library(data.table)
+library(future.apply)
+library(Matrix)
+library(matrixStats)
 
 library(effsize)
-library(matrixStats)
-library(future.apply)
 library(proxyC)
-library(Matrix)
 
 library(patchwork)
 library(ggplot2)
@@ -464,6 +468,8 @@ lapply(2:10, function(x) {
 }
 )
 
+mhMjr <- mhMjr %>% mutate(across(where(is.numeric), as.integer))
+
 saveRDS(mhMjr, file = 'mhMjr.rds')
 
 namesFull <- unique(mhMjr$muid)
@@ -847,114 +853,59 @@ rm(fnDm, ic, dm1, namesFull, namesSlim)
 ## 5.2 Functions                            #####
 # ********************************************* #
 
-fnSimS <- function(x) {
-  
-  #Values
-  focal <- mh %>% filter(pmid == pmids[x])
-  nFocal <- length(unique(focal$muid))
-  
-  others <- mh %>% semi_join(
-    pmidsDf %>% slice(x+1:nrow(.)),
-    by = 'pmid'
-  )
-  
-  if (nFocal>1) {
-    
-    dist <- dm[unique(others$muid), unique(focal$muid)] %>% 
-      cbind(., dist = rowMaxs(.)) %>% 
-      data.frame() %>% 
-      mutate(muid = rownames(.)) %>% 
-      inner_join(others, by = 'muid') %>% 
-      group_by(pmid) %>% 
-      summarise(
-        dnf = sum(dist),
-        nNeigh = n(),
-        across(.cols = all_of(1:nFocal), max)
-      ) %>% 
-      mutate(
-        dfn = rowSums(select(., 4:ncol(.))), #Must be in first mutate.
-        focal = pmids[x],
-        dist = (dnf + dfn) / (nNeigh + nFocal)
-      ) %>% 
-      select(pubA = pmid, pubB = focal, dist)
-    
-  } else if (nFocal == 1) {
-    
-    dist <- dm[unique(others$muid), focal$muid] %>% 
-      data.frame(dist = .) %>% 
-      mutate(muid = rownames(.)) %>% 
-      inner_join(others, by = 'muid') %>% 
-      group_by(pmid) %>% 
-      summarise(
-        dnf = sum(dist),
-        nNeigh = n(),
-        dfn = min(dist)
-      ) %>% 
-      mutate(
-        focal = pmids[x],
-        dist = (dnf + dfn) / (nNeigh + nFocal)
-      ) %>% 
-      select(pubA = pmid, pubB = focal, dist)
-    
-  }
-  
-} 
-
 fnSimW <- function(x) {
   
   #Values
-  focal <- mh %>% filter(pmid == pmids[x])
+  focal <- subset(mh, pmid == pmidsDf$pmid[x])
   mhF <- unique(focal$muid)
   nFocal <- length(mhF)
   sumMjr <- sum(focal$mjr)
   for (i in 2:10) assign(paste0('sw', i, 'f'), sum(focal[[paste0('w', i)]]))
   
   others <- mh %>% semi_join(
-    pmidsDf %>% slice(x+1:nrow(.)),
+    pmidsDf[x+1:nrow(pmidsDf), , drop = F],
     by = 'pmid'
   )
   
   #Get closest mesh in focal
   dist <- dm[unique(others$muid), mhF] %>%
     cbind(., dist = rowMaxs(.)) %>% 
-    data.frame() %>%
-    mutate(muid = rownames(.)) %>% 
-    inner_join(others, by = 'muid') 
+    as.data.table(keep.rownames = 'muid') %>% 
+    inner_join(others, by = 'muid' )
   
   for (i in 2:10){
     dist[[paste0('dw', i)]] <- dist[['dist']] * dist[[paste0('w', i)]]
   } 
   
-  dist <- dist %>% 
-    group_by(pmid) %>%
-    summarise(
-      dnfw1 = sum(dist), 
+  dist <- dist[
+    , c(
+      .(dnfw1 = sum(dist), 
       dnfw2 = sum(dw2), dnfw3 = sum(dw3), dnfw4 = sum(dw4), 
       dnfw5 = sum(dw5), dnfw6 = sum(dw6), dnfw7 = sum(dw7), 
       dnfw8 = sum(dw8), dnfw9 = sum(dw9), dnfw10 = sum(dw10),
       sw2n = sum(w2), sw3n = sum(w3), sw4n = sum(w4), sw5n = sum(w5), 
       sw6n = sum(w6), sw7n = sum(w7), sw8n = sum(w8), sw9n = sum(w9), 
-      sw10n = sum(w10), 
-      nOther = n(),
-      across(.cols = all_of(1:nFocal), max)
-    ) 
+      sw10n = sum(w10),
+      nOther = .N),
+      lapply(.SD, max) #Max because dist is negative
+    ), 
+    .SDcols = mhF, by = pmid
+  ]
   
   #Sum closest in neighbor
   for (i in 2:10) {
-    
-    dist[paste0('W', i, mhF)] <- lapply(
+    dist[, paste0('W', i, mhF) := lapply(
       mhF,
-      \(y) dist[, y] * focal[[paste0('w', i)]][match(y, focal$muid)]
-    )
+      \(y) .SD[[y]] * focal[[paste0('w', i)]][match(y, focal$muid)]
+    ), .SDcols = mhF]
   }
   
   #Non-weighted distance
-  dist <- dist %>% 
-    mutate(
-      focal = pmids[x],
-      distW1 = (rowSums(select(., starts_with(paste0('D0')))) + dnfw1) 
-      / (nFocal + nOther)
-    )
+  dist[, focal := pmidsDf$pmid[x]]
+  dist[
+    , distW1 := (rowSums(.SD, na.rm = TRUE) + dnfw1) / (nFocal + nOther),
+    .SDcols = mhF
+  ]
   
   #Weighted distances
   for (i in 2:10) {
@@ -973,16 +924,76 @@ fnSimW <- function(x) {
   
 }
 
+fnSimS <- function(x) {
+  
+  #Values
+  focal <- subset(mh, pmid == pmidsDf$pmid[x])
+  mhF <- unique(focal$muid)
+  nFocal <- length(mhF)
+  
+  others <- mh %>% semi_join(
+    pmidsDf[x+1:nrow(pmidsDf), , drop = F],
+    by = 'pmid'
+  )
+  
+  if (nFocal>1) {
+    
+    dist <- dm[unique(others$muid), mhF] %>%
+      cbind(., dist = rowMaxs(.)) %>% 
+      as.data.table(keep.rownames = 'muid', key = c('pmid', 'muid')) %>% 
+      inner_join(others, by = 'muid')
+    
+    dist <- dist[
+      , c(
+        .(dnf = sum(dist),
+          nNeigh = .N),
+        lapply(.SD, max) #Max because dist is negative
+      ), 
+      .SDcols = mhF, 
+      by = pmid
+    ]
+    
+    dist[, dfn   := rowSums(.SD), .SDcols = mhF]
+    dist[, focal := pmidsDf$pmid[x]]
+    dist[, dist  := (dnf + dfn) / (nNeigh + nFocal)]
+    
+    dist <- dist[, .(pubA = pmid, pubB = focal, dist)]
+    
+  } else if (nFocal == 1) {
+    
+    dist <- dm[unique(others$muid), mhF] %>% 
+      as.data.table(keep.rownames = T, key = c('rn', '.')) 
+    names(dist) <- c('muid', 'dist')
+    dist <- dist %>% inner_join(others, by = 'muid')
+    
+    dist <- dist[
+      , c(.(
+        dnf = sum(dist),
+        nNeigh = .N,
+        dfn = max(dist) #Max because dist is negative
+      )), 
+      by = pmid
+    ]
+    
+    dist[, focal := pmidsDf$pmid[x]]
+    dist[, dist  := (dnf + dfn) / (nNeigh + nFocal)]
+    
+    dist <- dist[, .(pubA = pmid, pubB = focal, dist)]
+    
+  }
+  
+}
+
 fnRel <- function(mat) {
   print(mat)
   dm <<- readRDS(paste0(mat, '.rds'))
   
   prefix <- str_remove(mat, 'dm_')
   
-  if (str_detect(mat, '_s_')){
+  if (str_detect(mat, '_s_')) {
     mh <<- readRDS('mhSlim.rds')
     
-    list <- future_lapply(1:(length(pmids)-1), fnSimS)
+    list <- future_lapply(1:(nrow(pmidsDf)-1), fnSimS)
     relPubs <- list %>% bind_rows()
     
     names(relPubs)[3] <- prefix
@@ -990,7 +1001,7 @@ fnRel <- function(mat) {
   } else if (str_detect(mat, '_f_')) {
     mh <<- readRDS('mhMjr.rds')
     
-    list <- future_lapply(1:(length(pmids)-1), fnSimW) 
+    list <- future_lapply(1:(nrow(pmidsDf)-1), fnSimW) 
     relPubs <- list %>% bind_rows()
     
     names(relPubs) <- str_replace(
@@ -1007,7 +1018,6 @@ fnRel <- function(mat) {
 ## 5.3 Graph + Zhu                          #####
 # ********************************************* #
 
-load('pmidsTopics.rda')
 load('pmidsDf.rda')
 
 plan(multisession, workers = 22) 
@@ -1025,7 +1035,7 @@ matrices <- paste0(
 
 for (matrix in matrices) fnRel(matrix)
 
-rm(dm, fnSimS, fnSimW, fnRel, matrix, pmids, pmidsDf)
+rm(dm, fnSimS, fnSimW, fnRel, matrix, pmidsDf)
 
 # ********************************************* #
 ## 5.4 Co-occurence, Boudreau              ######
@@ -1164,11 +1174,6 @@ df02 <- bmData %>% filter(rj1 == 0 & rj2 == 2)
 df22 <- bmData %>% filter(rj1 == 2 & rj2 == 2)
 
 vars <- colnames(bmData) %>% setdiff(c('pubA', 'pubB', 'topic', 'rj1', 'rj2'))
-
-clfD <- future_lapply(
-  vars,
-  \(x) cliff.delta(df02[[x]], df22[[x]])$estimate
-) %>% unlist()
 
 clfD <- future_lapply(
   vars,
